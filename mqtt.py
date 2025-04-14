@@ -10,12 +10,13 @@ import utime
 from collections import OrderedDict
 from machine import Timer, Pin
 import uasyncio as asyncio
-from nvs import get_product_id, product_key, clear_wifi_credentials
-from gpio import R1,R2,R3
+from nvs import get_product_id, product_key, clear_wifi_credentials, store_pid
+from gpio import R1,R2,R3,S_Led
 
 
 client = None
 product_id = get_product_id()
+mqtt_client = 0
 
 BROKER_ADDRESS = "mqtt.onwords.in"
 MQTT_CLIENT_ID = product_id
@@ -23,6 +24,7 @@ TOPIC_SUB = f"onwords/{product_id}/status"
 TOPIC_SUB1 = f"onwords/{product_id}/getCurrentStatus"
 TOPIC_SOFTRST = f"onwords/{product_id}/softReset"
 TOPIC_PUB = f"onwords/{product_id}/currentStatus"
+TOPIC_PID = f"onwords/{product_id}/storePid"
 PORT = 1883
 USERNAME = "Nikhil"
 MQTT_PASSWORD = "Nikhil8182"
@@ -94,21 +96,54 @@ def mqtt_callback(topic, msg):
 
         except ValueError as e:
             print("Error:", e)
+            
+    if topic_str == f"onwords/{product_id}/storePid":
+        try:
+            data = ujson.loads(msg)
+            if "pid" in data:
+                store_pid(data["pid"])
+                status_msg = ujson.dumps({"pid": data["pid"]})
+                client.publish(TOPIC_PID, status_msg)
+                print("restarting device now....")
+                time.sleep(2)
+                machine.reset()
+                
+        except Exception as e:
+            print("Error in JSON or storing:", e)
+            
+    
+    if topic_str == f"onwords/{product_id}/firmware":
+        try:
+            data = ujson.loads(msg)
+            if data.get("update") is True:
+                print("OTA update trigger received via MQTT!")
+                import ota_update
+                ota_update.ota_update()
+        except Exception as e:
+            print("Failed to parse OTA command:", e)
 
 #Connect MQTT
 def connect_mqtt():
     global client
+    global mqtt_connect
     try:
         client = MQTTClient(client_id=product_key, server=BROKER_ADDRESS, port=PORT, user=USERNAME, password=MQTT_PASSWORD, keepalive=MQTT_KEEPALIVE)
         client.set_callback(mqtt_callback)
         client.connect()
+        S_Led.value(1)
         client.subscribe(TOPIC_SUB)
         client.subscribe(TOPIC_SUB1)
         client.subscribe(TOPIC_SOFTRST)
+        client.subscribe(TOPIC_PID)
         print(f"Subscribed to {TOPIC_SUB}")
+        print(f"Subscribed to {TOPIC_SUB1}")
+        print(f"Subscribed to {TOPIC_SOFTRST}")
+        print(f"Subscribed to {TOPIC_PID}")
+        mqtt_client = 1 
         return client
     except Exception as e:
         print(f"Failed to connect to MQTT broker: {e}")
+        mqtt_client = 0
         return None
 
 #Reconnect MQTT
