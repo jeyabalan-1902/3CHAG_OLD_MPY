@@ -127,7 +127,7 @@ def connect_mqtt():
     global client
     global mqtt_connect
     try:
-        client = MQTTClient(client_id=product_key, server=BROKER_ADDRESS, port=PORT, user=USERNAME, password=MQTT_PASSWORD, keepalive=MQTT_KEEPALIVE)
+        client = MQTTClient(client_id=product_id, server=BROKER_ADDRESS, port=PORT, user=USERNAME, password=MQTT_PASSWORD, keepalive=MQTT_KEEPALIVE)
         client.set_callback(mqtt_callback)
         client.connect()
         S_Led.value(1)
