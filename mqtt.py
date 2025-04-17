@@ -61,6 +61,7 @@ def mqtt_callback(topic, msg):
                 R3.value(0)
                 status_msg = ujson.dumps({"action": "doubleGate"})
                 client.publish(TOPIC_PUB, status_msg)
+                print("callback published: {}". status_msg)
             
             if "action" in data and data["action"] == "singleGate":
                 print("received payload: {}".format(data))
@@ -69,6 +70,7 @@ def mqtt_callback(topic, msg):
                 R1.value(0)  
                 status_msg = ujson.dumps({"action": "singleGate"})
                 client.publish(TOPIC_PUB, status_msg)
+                print("callback published: {}". status_msg)
 
         except ValueError as e:
             print("Error parsing JSON:", e)
@@ -80,6 +82,7 @@ def mqtt_callback(topic, msg):
             if "request" in data and data["request"] == "getCurrentStatus":
                 status_msg = ujson.dumps({"action": ""})
                 client.publish(TOPIC_PUB, status_msg)
+                print("callback published: {}". status_msg)
 
         except ValueError as e:
             print("Error parsing JSON:", e)
@@ -91,6 +94,7 @@ def mqtt_callback(topic, msg):
                 "status": True
             }
             client.publish(TOPIC_SOFTRST, ujson.dumps(state))
+            print("callback published: {}". state)
             time.sleep(5)
             machine.reset()
 
@@ -130,6 +134,7 @@ def connect_mqtt():
         client = MQTTClient(client_id=product_id, server=BROKER_ADDRESS, port=PORT, user=USERNAME, password=MQTT_PASSWORD, keepalive=MQTT_KEEPALIVE)
         client.set_callback(mqtt_callback)
         client.connect()
+        print("mqtt client connection establised")
         S_Led.value(1)
         client.subscribe(TOPIC_SUB)
         client.subscribe(TOPIC_SUB1)
