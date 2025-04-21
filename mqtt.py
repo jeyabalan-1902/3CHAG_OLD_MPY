@@ -20,11 +20,12 @@ mqtt_client = 0
 
 BROKER_ADDRESS = "mqtt.onwords.in"
 MQTT_CLIENT_ID = product_id
-TOPIC_SUB = f"onwords/{product_id}/status"
-TOPIC_SUB1 = f"onwords/{product_id}/getCurrentStatus"
+TOPIC_STATUS = f"onwords/{product_id}/status"
+TOPIC_GET_CURRENT_STATUS = f"onwords/{product_id}/getCurrentStatus"
 TOPIC_SOFTRST = f"onwords/{product_id}/softReset"
-TOPIC_PUB = f"onwords/{product_id}/currentStatus"
+TOPIC_CURRENT_STATUS = f"onwords/{product_id}/currentStatus"
 TOPIC_PID = f"onwords/{product_id}/storePid"
+TOPIC_FIRMWARE = f"onwords/{product_id}/firmware"
 PORT = 1883
 USERNAME = "Nikhil"
 MQTT_PASSWORD = "Nikhil8182"
@@ -60,8 +61,7 @@ def mqtt_callback(topic, msg):
                 R2.value(0)
                 R3.value(0)
                 status_msg = ujson.dumps({"action": "doubleGate"})
-                client.publish(TOPIC_PUB, status_msg)
-                print("callback published: {}". status_msg)
+                client.publish(TOPIC_CURRENT_STATUS, status_msg)
             
             if "action" in data and data["action"] == "singleGate":
                 print("received payload: {}".format(data))
@@ -69,8 +69,7 @@ def mqtt_callback(topic, msg):
                 time.sleep_ms(600)
                 R1.value(0)  
                 status_msg = ujson.dumps({"action": "singleGate"})
-                client.publish(TOPIC_PUB, status_msg)
-                print("callback published: {}". status_msg)
+                client.publish(TOPIC_CURRENT_STATUS, status_msg)
 
         except ValueError as e:
             print("Error parsing JSON:", e)
@@ -81,8 +80,7 @@ def mqtt_callback(topic, msg):
             print("received payload: {}".format(data))
             if "request" in data and data["request"] == "getCurrentStatus":
                 status_msg = ujson.dumps({"action": ""})
-                client.publish(TOPIC_PUB, status_msg)
-                print("callback published: {}". status_msg)
+                client.publish(TOPIC_CURRENT_STATUS, status_msg)
 
         except ValueError as e:
             print("Error parsing JSON:", e)
@@ -94,7 +92,6 @@ def mqtt_callback(topic, msg):
                 "status": True
             }
             client.publish(TOPIC_SOFTRST, ujson.dumps(state))
-            print("callback published: {}". state)
             time.sleep(5)
             machine.reset()
 
@@ -121,8 +118,28 @@ def mqtt_callback(topic, msg):
             data = ujson.loads(msg)
             if data.get("update") is True:
                 print("OTA update trigger received via MQTT!")
+
+                # Notify the server that OTA started
+                status_msg = ujson.dumps({"status": "update_started", "pid": product_id})
+                client.publish(f"onwords/{product_id}/firmware", status_msg)
+
                 import ota_update
-                ota_update.ota_update()
+                success = ota_update.ota_update_with_result()
+
+                # Notify server about result
+                if success:
+                    status_msg = ujson.dumps({"status": "update_success", "pid": product_id})
+                else:
+                    status_msg = ujson.dumps({"status": "update_failed", "pid": product_id})
+
+                client.publish(f"onwords/{product_id}/firmware", status_msg)
+                time.sleep(3)
+
+                # Restart if successful
+                if success:
+                    print("OTA complete, rebooting now...")
+                    machine.reset()
+
         except Exception as e:
             print("Failed to parse OTA command:", e)
 
@@ -134,16 +151,17 @@ def connect_mqtt():
         client = MQTTClient(client_id=product_id, server=BROKER_ADDRESS, port=PORT, user=USERNAME, password=MQTT_PASSWORD, keepalive=MQTT_KEEPALIVE)
         client.set_callback(mqtt_callback)
         client.connect()
-        print("mqtt client connection establised")
         S_Led.value(1)
-        client.subscribe(TOPIC_SUB)
-        client.subscribe(TOPIC_SUB1)
+        client.subscribe(TOPIC_STATUS)
+        client.subscribe(TOPIC_GET_CURRENT_STATUS)
         client.subscribe(TOPIC_SOFTRST)
         client.subscribe(TOPIC_PID)
-        print(f"Subscribed to {TOPIC_SUB}")
-        print(f"Subscribed to {TOPIC_SUB1}")
+        client.subscribe(TOPIC_FIRMWARE)
+        print(f"Subscribed to {TOPIC_STATUS}")
+        print(f"Subscribed to {TOPIC_GET_CURRENT_STATUS}")
         print(f"Subscribed to {TOPIC_SOFTRST}")
         print(f"Subscribed to {TOPIC_PID}")
+        print(f"Subscribed to {TOPIC_FIRMWARE}")
         mqtt_client = 1 
         return client
     except Exception as e:

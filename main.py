@@ -43,6 +43,15 @@ def Rst_irq_handler(pin):
     if pin.value() == 0:             
         press_start_time = time.ticks_ms()
         reset_timer.init(mode=Timer.ONE_SHOT, period=5000, callback=reset_callback)
+        
+def print_firmware_version():
+    try:
+        with open("local_version.json") as f:
+            version = ujson.loads(f.read())["version"]
+            print(f"Firmware Version: {version}")
+    except:
+        print("Firmware Version: Unknown")
+
 
 async def wifi_reconnect():
     retry_count = 0
@@ -104,7 +113,8 @@ async def main():
         ap.active(False)
         while True:
             if connect_wifi(stored_ssid, stored_password):  
-                print("Wi-Fi Connected. Starting background tasks...")
+                print("Wi-Fi Connected. Starting background tasks...on the updated version")
+                print_firmware_version()
                 connect_mqtt()
                 t1 = asyncio.create_task(mqtt_listener())
                 t2 = asyncio.create_task(mqtt_keepalive())
