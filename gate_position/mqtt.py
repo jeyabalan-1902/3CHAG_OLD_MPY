@@ -13,10 +13,19 @@ import uasyncio as asyncio
 from nvs import get_product_id, product_key, clear_wifi_credentials, store_pid, nvs, get_stored_value
 from gpio import R1,R2,R3,S_Led, uart
 
+from machine import Pin, I2C
+from time import sleep
+from mpu6050 import MPU6050Swing
+
+i2c = I2C(0, scl=Pin(22), sda=Pin(21))  # Adjust pins if needed
+mpu = MPU6050Swing(i2c)
+
+
+
 client = None
 product_id = get_product_id()
 mqtt_client = 0
-value = 0
+angle = 0
 
 BROKER_ADDRESS = "mqtt.onwords.in"
 MQTT_CLIENT_ID = product_id
@@ -35,37 +44,30 @@ MQTT_KEEPALIVE = 60
 
 
 async def get_GatePosition():
-    global value
-    while True:
-        if uart.any():
+    global angle
+    while True:   
+        angle, percent = mpu.update()
+        print("Swing Angle: {:.2f}°, Open %: {:.2f}%".format(angle, percent))
+        start = get_stored_value("start")
+        end = get_stored_value("end")
+        TOLERANCE = 1.0
+        if start is None or end is None:
+            status_msg = ujson.dumps({"currentPosition": value})
+            client.publish(TOPIC_CURRENT_POSITION, status_msg)
+        else:
             try:
-                data = uart.readline()
-                if data:
-                    value = data.decode('utf-8').strip()
+                current = float(angle)
+                start_f = float(start)
+                end_f = float(end)
 
-                    start = get_stored_value("start")
-                    end = get_stored_value("end")
+                if abs(current - start_f) > TOLERANCE and abs(current - end_f) > TOLERANCE:
+                    status_msg = ujson.dumps({"currentPosition": angle})
+                    client.publish(TOPIC_CURRENT_STATUS, status_msg)
+                    await asyncio.sleep(0.5)
                     
-                    TOLERANCE = 10.0
 
-                    if start is None or end is None:
-                        status_msg = ujson.dumps({"currentPosition": value})
-                        client.publish(TOPIC_CURRENT_POSITION, status_msg)
-                    else:
-                        try:
-                            current = float(value)
-                            start_f = float(start)
-                            end_f = float(end)
-
-                            if abs(current - start_f) > TOLERANCE and abs(current - end_f) > TOLERANCE:
-                                status_msg = ujson.dumps({"currentPosition": value})
-                                client.publish(TOPIC_CURRENT_STATUS, status_msg)
-
-                        except ValueError:
-                            print("Value conversion error")
-
-            except Exception as e:
-                print("UART read error:", e)
+            except ValueError:
+                print("Value conversion error")
 
         await asyncio.sleep(0.5)
 
@@ -83,7 +85,7 @@ def hardReset():
 
 #MQTT callback
 def mqtt_callback(topic, msg):
-    global value
+    global angle
     topic_str = topic.decode()
     print(f"Received from {topic_str}: {msg.decode()}")
     
@@ -134,7 +136,7 @@ def mqtt_callback(topic, msg):
             if "request" in data and data["request"] == "getCurrentStatus":
                 start = get_stored_value("start")
                 end = get_stored_value("end")
-                status_msg = ujson.dumps({"currentPosition": value, "start": start, "end": end})
+                status_msg = ujson.dumps({"currentPosition": angle, "start": start, "end": end})
                 client.publish(TOPIC_CURRENT_STATUS, status_msg)
 
         except ValueError as e:

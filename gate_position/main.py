@@ -19,7 +19,7 @@ from machine import Pin, Timer
 from nvs import get_product_id, get_stored_wifi_credentials, product_key, clear_wifi_credentials
 from wifi_con import connect_wifi, check_internet, wifi, ap, wifi_led_task, internet_status
 from http import start_http_server
-from mqtt import mqtt_listener, mqtt_keepalive, connect_mqtt, client, hardReset, get_GatePosition
+from mqtt import mqtt_listener, mqtt_keepalive, connect_mqtt, client, hardReset, get_GatePosition, mpu
 from gpio import Rst, http_server_led, press_start_time, reset_timer, S_Led
 
 MAX_FAST_RETRIES = 50
@@ -108,6 +108,7 @@ async def wifi_reconnect():
 Rst.irq(trigger=Pin.IRQ_FALLING, handler=Rst_irq_handler)
         
 async def main():
+    mpu.calibrate_gyro_z()
     stored_ssid, stored_password = get_stored_wifi_credentials()
     if stored_ssid and stored_password:
         ap.active(False)

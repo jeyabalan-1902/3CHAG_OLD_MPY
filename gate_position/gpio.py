@@ -19,7 +19,7 @@ R2 = Pin(25, Pin.OUT)
 R3 = Pin(33, Pin.OUT)
 
 S_Led = Pin(4, Pin.OUT)
-uart = UART(1, baudrate=4800, tx=17, rx=16, timeout=1000)
+uart = UART(1, baudrate=115200, tx=17, rx=16, timeout=1000)
 
 Rst = Pin(32, Pin.IN, Pin.PULL_UP)
 
