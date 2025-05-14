@@ -16,11 +16,11 @@ import uasyncio as asyncio
 import struct
 
 from machine import Pin, Timer
-from nvs import get_product_id, get_stored_wifi_credentials, product_key, clear_wifi_credentials
-from wifi_con import connect_wifi, check_internet, wifi, ap, wifi_led_task, internet_status
+from nvs import get_product_id, get_stored_wifi_credentials, clear_wifi_credentials
+from wifi_con import connect_wifi, check_internet, wifi, ap
 from http import start_http_server
-from mqtt import mqtt_listener, mqtt_keepalive, connect_mqtt, client, hardReset
-from gpio import Rst, http_server_led, press_start_time, reset_timer, S_Led
+from mqtt import mqtt_listener, mqtt_keepalive, connect_mqtt, process_F3, process_F2, process_F1, hardReset
+from gpio import F1, F2, F3, Rst, http_server_led, press_start_time, reset_timer, S_Led, last_trigger_times, DEBOUNCE_DELAY, debounce_timer
 
 MAX_FAST_RETRIES = 50
 FAST_RETRY_INTERVAL = 10
@@ -44,6 +44,28 @@ def Rst_irq_handler(pin):
         press_start_time = time.ticks_ms()
         reset_timer.init(mode=Timer.ONE_SHOT, period=5000, callback=reset_callback)
         
+def handle_F1(pin):
+    global last_trigger_times
+    now = utime.ticks_ms()
+    if utime.ticks_diff(now, last_trigger_times["F1"]) > DEBOUNCE_DELAY:
+        last_trigger_times["F1"] = now
+        debounce_timer.init(mode=Timer.ONE_SHOT, period=DEBOUNCE_DELAY, callback=lambda t: process_F1())
+    
+def handle_F2(pin):
+    global last_trigger_times
+    now = utime.ticks_ms()
+    if utime.ticks_diff(now, last_trigger_times["F2"]) > DEBOUNCE_DELAY:
+        last_trigger_times["F2"] = now
+        debounce_timer.init(mode=Timer.ONE_SHOT, period=DEBOUNCE_DELAY, callback=lambda t: process_F2())
+
+
+def handle_F3(pin):
+    global last_trigger_times
+    now = utime.ticks_ms()
+    if utime.ticks_diff(now, last_trigger_times["F3"]) > DEBOUNCE_DELAY:
+        last_trigger_times["F3"] = now
+        debounce_timer.init(mode=Timer.ONE_SHOT, period=DEBOUNCE_DELAY, callback=lambda t: process_F3())
+        
 def print_firmware_version():
     try:
         with open("local_version.json") as f:
@@ -51,6 +73,7 @@ def print_firmware_version():
             print(f"Firmware Version: {version}")
     except:
         print("Firmware Version: Unknown")
+        
 
 async def wifi_reconnect():
     retry_count = 0
@@ -101,10 +124,14 @@ async def wifi_reconnect():
                 await asyncio.sleep(5)  
             else:
                 print("Wi-Fi and internet are connected.")
-                await asyncio.sleep(10) 
-
+                await asyncio.sleep(10)
                 
+
+F1.irq(trigger=Pin.IRQ_RISING, handler=handle_F1)
+F2.irq(trigger=Pin.IRQ_RISING, handler=handle_F2)
+F3.irq(trigger=Pin.IRQ_RISING, handler=handle_F3)
 Rst.irq(trigger=Pin.IRQ_FALLING, handler=Rst_irq_handler)
+
         
 async def main():
     stored_ssid, stored_password = get_stored_wifi_credentials()
@@ -112,7 +139,7 @@ async def main():
         ap.active(False)
         while True:
             if connect_wifi(stored_ssid, stored_password):  
-                print("Wi-Fi Connected. Starting background tasks...")
+                print("Wi-Fi Connected. Starting background tasks...on the updated version")
                 print_firmware_version()
                 connect_mqtt()
                 t1 = asyncio.create_task(mqtt_listener())

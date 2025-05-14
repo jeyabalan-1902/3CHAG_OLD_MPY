@@ -15,6 +15,7 @@ from gpio import R1,R2,R3,S_Led
 
 
 client = None
+mqtt_reconnect_lock = asyncio.Lock()
 product_id = get_product_id()
 mqtt_client = 0
 
@@ -117,25 +118,43 @@ def mqtt_callback(topic, msg):
         try:
             data = ujson.loads(msg)
             if data.get("update") is True:
-                print("OTA update trigger received via MQTT!")
+                server_ip = data.get("server")
+                if not server_ip:
+                    print("No server IP provided in payload.")
+                    return
 
-                # Notify the server that OTA started
-                status_msg = ujson.dumps({"status": "update_started", "pid": product_id})
+                from ota_update import get_local_version  
+                current_version = get_local_version()
+
+                print(f"OTA update trigger received. Server IP: {server_ip}")
+
+                status_msg = ujson.dumps({
+                    "status": "update_started",
+                    "pid": product_id,
+                    "version": current_version
+                })
                 client.publish(f"onwords/{product_id}/firmware", status_msg)
 
                 import ota_update
-                success = ota_update.ota_update_with_result()
+                success = ota_update.ota_update_with_result(server_ip)
 
-                # Notify server about result
                 if success:
-                    status_msg = ujson.dumps({"status": "update_success", "pid": product_id})
+                    updated_version = ota_update.get_local_version()
+                    status_msg = ujson.dumps({
+                        "status": "update_success",
+                        "pid": product_id,
+                        "version": updated_version
+                    })
                 else:
-                    status_msg = ujson.dumps({"status": "update_failed", "pid": product_id})
+                    status_msg = ujson.dumps({
+                        "status": "update_failed",
+                        "pid": product_id,
+                        "version": current_version
+                    })
 
                 client.publish(f"onwords/{product_id}/firmware", status_msg)
                 time.sleep(3)
 
-                # Restart if successful
                 if success:
                     print("OTA complete, rebooting now...")
                     machine.reset()
@@ -170,28 +189,78 @@ def connect_mqtt():
         return None
 
 #Reconnect MQTT
-def reconnect_mqtt():
-    global client
-    print("Reconnecting MQTT...")
-    try:
-        if client:
-            client.disconnect()
-    except:
-        pass
-    client = None
-    await asyncio.sleep(2)  
-    return connect_mqtt()
+async def reconnect_mqtt(max_retries = 10):
+    global client, mqtt_client
+    print("Reconnecting to MQTT broker...")
+    
+    async with mqtt_reconnect_lock:
+        if not wifi.isconnected():
+            print("Wi-Fi not connected, skipping MQTT reconnect.")
+            return
+        
+        for attempt in range(1 , max_retries + 1):
+            
+            try:
+                if client:
+                    try:
+                        client.disconnect()
+                    except:
+                        pass  
+                client = None 
+                await asyncio.sleep(2)  
 
-#MQTT Listen
+                print("Attempting MQTT reconnection...")
+                new_client = MQTTClient(
+                    client_id=product_id,
+                    server=BROKER_ADDRESS,
+                    port=PORT,
+                    user=USERNAME,
+                    password=MQTT_PASSWORD,
+                    keepalive=MQTT_KEEPALIVE
+                )
+                new_client.set_callback(mqtt_callback)
+                new_client.connect()
+                new_client.subscribe(TOPIC_STATUS)
+                new_client.subscribe(TOPIC_GET_CURRENT_STATUS)
+                new_client.subscribe(TOPIC_SOFTRST)
+                new_client.subscribe(TOPIC_PID)
+                new_client.subscribe(TOPIC_FIRMWARE)
+                print("Reconnected to MQTT broker")
+                if new_client:
+                    client = new_client
+                    mqtt_client = 1
+                    S_Led.value(1)
+                    return True
+
+            except Exception as e:
+                print(f"Unexpected error in reconnect_mqtt(): {e}")
+                client = None
+                mqtt_client = 0
+                S_Led.value(0)
+                await asyncio.sleep(2)
+                
+        print("All MQTT reconnection attempts failed.")
+        return False
+            
+           
 async def mqtt_listener():
+    global client, mqtt_client
     while True:
         try:
             if client:
-                client.check_msg()
+                try:
+                    client.check_msg()
+                except Exception as e:
+                    print("MQTT check_msg error:", e)
+                    mqtt_client = 0
+                    client = None
+                    await reconnect_mqtt()
+            else:
+                print("MQTT client not available, trying to reconnect...")
+                await reconnect_mqtt()
         except Exception as e:
-            print("Error checking MQTT:", e)
-            await reconnect_mqtt()
-        await asyncio.sleep(0.1)
+            print("Critical error in mqtt_listener():", e)
+        await asyncio.sleep_ms(10)
 
 #keep alive
 async def mqtt_keepalive():

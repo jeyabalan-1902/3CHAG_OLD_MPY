@@ -2,12 +2,6 @@ import esp32
 
 nvs = esp32.NVS("storage")
 product_key = "product_id"
-        
-def store_pid(product_id):
-    encoded_id = product_id.encode()  
-    nvs.set_blob(product_key, encoded_id)  
-    nvs.commit()  
-    print("Product ID saved in NVS.")
 
 def get_product_id():
     try:

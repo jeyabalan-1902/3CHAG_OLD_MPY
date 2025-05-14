@@ -18,7 +18,6 @@ def get_product_id():
         return None
     
 product_id = get_product_id()
-print(product_id)
 
 def get_stored_wifi_credentials():
     try:

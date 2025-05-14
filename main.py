@@ -17,10 +17,11 @@ import struct
 
 from machine import Pin, Timer
 from nvs import get_product_id, get_stored_wifi_credentials, product_key, clear_wifi_credentials
-from wifi_con import connect_wifi, check_internet, wifi, ap, wifi_led_task, internet_status
+from wifi_con import connect_wifi, check_internet, wifi, ap
 from http import start_http_server
-from mqtt import mqtt_listener, mqtt_keepalive, connect_mqtt, client, hardReset
-from gpio import Rst, http_server_led, press_start_time, reset_timer, S_Led
+from mqtt import mqtt_listener, mqtt_keepalive, connect_mqtt, client, hardReset, reconnect_mqtt
+from gpio import Rst, http_server_led, press_start_time, reset_timer, S_Led, blink_reconnect
+import mqtt
 
 MAX_FAST_RETRIES = 50
 FAST_RETRY_INTERVAL = 10
@@ -52,28 +53,26 @@ def print_firmware_version():
     except:
         print("Firmware Version: Unknown")
 
-
 async def wifi_reconnect():
     retry_count = 0
+
     while True:
         if not wifi.isconnected():
             print("Wi-Fi disconnected! Attempting reconnection...")
-            S_Led.value(1)
-            time.sleep(0.5)
-            S_Led.value(0)
-            time.sleep(0.5)
+            await blink_reconnect()
             stored_ssid, stored_password = get_stored_wifi_credentials()
 
             if stored_ssid and stored_password:
+                wifi.disconnect()
+                await asyncio.sleep(1)  
+
                 while retry_count < MAX_FAST_RETRIES:
-                    S_Led.value(1)
-                    time.sleep(0.5)
-                    S_Led.value(0)
-                    time.sleep(0.5)
+                    await blink_reconnect()
                     print(f"Reconnection attempt {retry_count + 1} of {MAX_FAST_RETRIES}...")
-                    if connect_wifi(stored_ssid, stored_password):
+                    if await connect_wifi(stored_ssid, stored_password):
                         print("Wi-Fi Reconnected!")
-                        retry_count = 0  
+                        retry_count = 0
+                        await reconnect_mqtt()
                         break
                     retry_count += 1
                     await asyncio.sleep(FAST_RETRY_INTERVAL)
@@ -81,54 +80,62 @@ async def wifi_reconnect():
                 if not wifi.isconnected():
                     print("Switching to slow reconnection attempts every 5 minutes.")
                     while not wifi.isconnected():
-                        S_Led.value(1)
-                        time.sleep(0.5)
-                        S_Led.value(0)
-                        time.sleep(0.5)
-                        if connect_wifi(stored_ssid, stored_password):
+                        await blink_reconnect()
+                        wifi.disconnect()
+                        await asyncio.sleep(1)
+                        if await connect_wifi(stored_ssid, stored_password):
                             print("Wi-Fi Reconnected!")
-                            retry_count = 0 
+                            retry_count = 0
+                            await reconnect_mqtt()
                             break
                         print("Reconnection failed, retrying in 5 minutes...")
                         await asyncio.sleep(SLOW_RETRY_INTERVAL)
+
             else:
-                http_server_led()
-                print("No stored Wi-Fi credentials. Restarting HTTP server...")
+                print("No stored Wi-Fi credentials. Starting HTTP server...")
+                await http_server_led()
                 await start_http_server()
         else:
             if not check_internet():
                 print("Wi-Fi connected but no internet access. Reconnecting Wi-Fi...")
-                wifi.disconnect()  
-                await asyncio.sleep(5)  
+                wifi.disconnect()
+                await asyncio.sleep(5)
             else:
-                print("Wi-Fi and internet are connected.")
-                await asyncio.sleep(10) 
+                await asyncio.sleep(10)
 
                 
 Rst.irq(trigger=Pin.IRQ_FALLING, handler=Rst_irq_handler)
         
 async def main():
+    print_firmware_version()
+
     stored_ssid, stored_password = get_stored_wifi_credentials()
+
     if stored_ssid and stored_password:
         ap.active(False)
-        while True:
-            if connect_wifi(stored_ssid, stored_password):  
-                print("Wi-Fi Connected. Starting background tasks...on the updated version")
-                print_firmware_version()
-                connect_mqtt()
-                t1 = asyncio.create_task(mqtt_listener())
-                t2 = asyncio.create_task(mqtt_keepalive())
-                t3 = asyncio.create_task(wifi_reconnect())       
-                await asyncio.gather(t1, t2, t3)
-                break 
-                
+        wifi_connected = await connect_wifi(stored_ssid, stored_password)
+        
+        tasks = [asyncio.create_task(wifi_reconnect())]
+        
+        if wifi_connected:
+            print("Wi-Fi Connected. Starting background tasks.")
+            mqtt.mqtt_client = connect_mqtt()
+
+            if mqtt.mqtt_client:
+                tasks += [
+                    asyncio.create_task(mqtt_listener()),
+                    asyncio.create_task(mqtt_keepalive())
+                ]
             else:
-                print("Wi-Fi connected but no internet access. Reconnecting Wi-Fi...")
-                wifi.disconnect() 
-                await asyncio.sleep(5)        
+                print("MQTT connection failed. Running without MQTT.")
+        else:
+            print("Wi-Fi failed. trying to reconnect.......")
+            
+        await asyncio.gather(*tasks)
+        
     else:
-        print("No WiFi credentials found, starting HTTP server...")
-        http_server_led()
+        print("No Wi-Fi credentials found. Starting HTTP server...")
+        await http_server_led()
         await start_http_server()
 
 if __name__ == "__main__":

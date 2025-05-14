@@ -7,16 +7,16 @@ import ubinascii
 import urandom
 import machine
 import utime
+import network
 from collections import OrderedDict
 from machine import Timer, Pin
 import uasyncio as asyncio
-from nvs import get_product_id, product_key, clear_wifi_credentials, store_pid
-from gpio import R1,R2,R3,S_Led
+from nvs import get_product_id, product_key, clear_wifi_credentials
+from gpio import R1,R2,R3, S_Led
 
 
 client = None
 product_id = get_product_id()
-mqtt_client = 0
 
 BROKER_ADDRESS = "mqtt.onwords.in"
 MQTT_CLIENT_ID = product_id
@@ -26,11 +26,18 @@ TOPIC_SOFTRST = f"onwords/{product_id}/softReset"
 TOPIC_CURRENT_STATUS = f"onwords/{product_id}/currentStatus"
 TOPIC_PID = f"onwords/{product_id}/storePid"
 TOPIC_FIRMWARE = f"onwords/{product_id}/firmware"
+TOPIC_DEVICE_LOG = f"onwords/{product_id}/switch"
 PORT = 1883
 USERNAME = "Nikhil"
 MQTT_PASSWORD = "Nikhil8182"
 MQTT_KEEPALIVE = 60
 
+def get_timestamp():
+    try:
+        ntptime.settime()  
+        return utime.time() * 1000  
+    except:
+        return 0 
 
 def hardReset():
     global client
@@ -44,6 +51,38 @@ def hardReset():
         except Exception as e:
             print(f"Failed to publish hard reset message: {e}")
 
+#publish devices state
+def publish_state():
+    global client
+    if client:
+        state = {
+            "device1": R1.value(),
+            "device2": R2.value(),
+            "device3": R3.value()
+        }
+
+        client.publish(TOPIC_CURRENT_STATUS, ujson.dumps(state))
+        print("Published state:", state)
+    else:
+        print("MQTT client not connected!")
+ 
+ 
+#publish Device log
+def publish_deviceLog(device, state):
+    global client
+    if client:
+        log = {
+            device: state,
+            "id": product_id,
+            "client_id": "Switch",
+            "ip": network.WLAN(network.STA_IF).ifconfig()[0],
+            "time_stamp": get_timestamp()
+        }
+        client.publish(TOPIC_DEVICE_LOG, ujson.dumps(log))
+        print("log published:", log)       
+    else:
+        print("mqtt client not connected")
+
 #MQTT callback
 def mqtt_callback(topic, msg):
     topic_str = topic.decode()
@@ -53,22 +92,19 @@ def mqtt_callback(topic, msg):
         try:
             data = ujson.loads(msg)
 
-            if "action" in data and data["action"] == "osc":
-                print("received payload: {}".format(data))
-                R1.value(1)
-                R3.value(1)
-                time.sleep_ms(600)
-                R1.value(0)
-                R3.value(0)
-                status_msg = ujson.dumps({"action": "osc"})
+            if "device1" in data and data["device1"] in [0, 1]:
+                R1.value(data["device1"])
+                status_msg = ujson.dumps({"device1": data["device1"]})
                 client.publish(TOPIC_CURRENT_STATUS, status_msg)
-            
-            if "action" in data and data["action"] == "ped":
-                print("received payload: {}".format(data))
-                R2.value(1)  
-                time.sleep_ms(600)
-                R2.value(0)  
-                status_msg = ujson.dumps({"action": "ped"})
+
+            if "device2" in data and data["device2"] in [0, 1]:
+                R2.value(data["device2"])
+                status_msg = ujson.dumps({"device2": data["device2"]})
+                client.publish(TOPIC_CURRENT_STATUS, status_msg)
+
+            if "device3" in data and data["device3"] in [0, 1]:
+                R3.value(data["device3"])
+                status_msg = ujson.dumps({"device3": data["device3"]})
                 client.publish(TOPIC_CURRENT_STATUS, status_msg)
 
         except ValueError as e:
@@ -76,11 +112,7 @@ def mqtt_callback(topic, msg):
 
     if topic_str == f"onwords/{product_id}/getCurrentStatus":
         try:
-            data = ujson.loads(msg)
-            print("received payload: {}".format(data))
-            if "request" in data and data["request"] == "getCurrentStatus":
-                status_msg = ujson.dumps({"action": ""})
-                client.publish(TOPIC_CURRENT_STATUS, status_msg)
+            publish_state()
 
         except ValueError as e:
             print("Error parsing JSON:", e)
@@ -204,3 +236,26 @@ async def mqtt_keepalive():
             print("MQTT Keep-Alive failed:", e)
             await reconnect_mqtt()
         await asyncio.sleep(MQTT_KEEPALIVE // 2)
+        
+        
+def process_F1():
+    new_state = not R1.value()
+    R1.value(new_state)
+    print("switch 1 toggled")
+    publish_state()
+    publish_deviceLog("device1", new_state)
+    
+def process_F2():
+    new_state = not R2.value()
+    R2.value(new_state)
+    print("Switch 2 toggled")
+    publish_state()
+    publish_deviceLog("device2", new_state)
+    
+
+def process_F3():
+    new_state = not R3.value()
+    R3.value(new_state)
+    print("Switch 3 toggled")
+    publish_state()
+    publish_deviceLog("device3", new_state)

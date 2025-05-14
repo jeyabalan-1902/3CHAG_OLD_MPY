@@ -2,16 +2,14 @@ import esp32
 import usocket as socket
 import ujson
 import time
+import select
 import utime
 import machine
 import uasyncio as asyncio
 from machine import Timer
 from nvs import nvs
 
-
-#HTTP connection request
-def handle_request(conn):
-    """Handles incoming HTTP requests."""
+async def handle_request(conn):
     try:
         request = conn.recv(1024).decode()
         print("Received Request:\n", request)
@@ -29,25 +27,36 @@ def handle_request(conn):
                 nvs.commit()
                 print(f"WiFi credentials stored: SSID={ssid}, Password={password}")
 
-                conn.send("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nCredentials Saved. Restarting...")
+                conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nCredentials Saved. Restarting...")
                 conn.close()
-                time.sleep(2)  
+                await asyncio.sleep(2)
                 print("machine going to restart")
-                machine.reset()  
+                machine.reset()
     except Exception as e:
         print("Error handling request:", e)
-        conn.send("HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nInvalid Request")
-        conn.close()
+        try:
+            conn.sendall(b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nInvalid Request")
+            conn.close()
+        except:
+            pass
 
 async def start_http_server():
     addr = ("0.0.0.0", 8182)
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s = socket.socket()
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(addr)
     s.listen(5)
+    s.setblocking(False)
+
     print("HTTP Server started on 192.168.4.1:8182")
 
     while True:
-        conn, addr = s.accept()
-        print(f"Connection established with {addr}")
-        handle_request(conn)
+        r, _, _ = select.select([s], [], [], 1.0) 
+        if s in r:
+            try:
+                conn, addr = s.accept()
+                print(f"Connection established with {addr}")
+                await handle_request(conn)
+            except Exception as e:
+                print("Accept error:", e)
+        await asyncio.sleep(0.1)

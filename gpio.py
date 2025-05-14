@@ -27,19 +27,20 @@ press_start_time = None
 debounce_timer = Timer(2)
 reset_timer = Timer(1)
 
-def http_server_led():
-    S_Led.value(1)
-    time.sleep(1)
-    S_Led.value(0)
-    time.sleep(1)
-    S_Led.value(1)
-    time.sleep(1)
-    S_Led.value(0)
-    time.sleep(1)
-    S_Led.value(1)
-    time.sleep(1)
-    S_Led.value(0)
-    time.sleep(1)
+async def http_server_led():
+    for _ in range(3):
+        S_Led.value(1)
+        await asyncio.sleep(1)
+        S_Led.value(0)
+        await asyncio.sleep(1)
+
+    
+async def blink_reconnect():
+    for _ in range(3):
+        S_Led.value(1)
+        await asyncio.sleep(0.5)
+        S_Led.value(0)
+        await asyncio.sleep(0.5)
 
 
 
